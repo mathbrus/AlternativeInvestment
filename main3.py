@@ -7,8 +7,9 @@ import pandas as pd
 import pickle
 from scipy import isnan
 from sklearn import svm, neighbors
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 import warnings
 
 
@@ -68,7 +69,8 @@ def transform_large_dataframe(data, chunk_size, variable='RET'):
     # We add the companies one by one starting from the first company not included
     remainder_subtable = transform_dataframe(data, k=0, chunk_size=nb_comp_left, variable=variable,
                                              rem_init_index=nb_chunks*chunk_size)
-    remainder_subtable = pd.DataFrame(remainder_subtable, dtype="float32")
+    remainder_subtable['date'] = remainder_subtable['date'].apply(int)
+    # remainder_subtable = pd.DataFrame(remainder_subtable, dtype="float32")
     big_table = big_table.merge(remainder_subtable, how='left', on='date')
     print("Remainder included")
     print("Size of the dataframe : {}".format(big_table.shape))
@@ -177,7 +179,7 @@ def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
     filter out all the NaNs."""
 
     # We initialize the dataframe that we want to return
-    ml_df = pd.DataFrame({'date': [19509658], 'target': [0], 'price_1m': [0], 'price_122': [0]})
+    ml_df = pd.DataFrame({'date': [19509658], 'PERMNO': [00000], 'target': [0], 'price_1m': [0], 'price_122': [0]})
     
     
     for i in range(len(permno_list)):
@@ -201,11 +203,13 @@ def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
         y_df_subtable = y_df_subtable.rename(index=str, columns={"date": "date", permno_list[i]: "target", })
         x1_df_subtable = x1_df_subtable.rename(index=str, columns={"date": "date", permno_list[i]: "price_1m", })
         x2_df_subtable = x2_df_subtable.rename(index=str, columns={"date": "date", permno_list[i]: "price_122", })
+        # The column of permnos
+        y_df_subtable = y_df_subtable.assign(PERMNO = [permno_list[i] for t in range(len(y_df_subtable))])
         # Merging
         y_df_subtable = y_df_subtable.merge(x1_df_subtable, how='left', on='date')
         y_df_subtable = y_df_subtable.merge(x2_df_subtable, how='left', on='date')
         # We append, but without the last value since there is no future price afterwards.
-        ml_df = ml_df.append(y_df_subtable[:-1], ignore_index=True)
+        ml_df = ml_df.append(y_df_subtable[:-1], ignore_index=True, sort=False)
 
     # Deleting the first, useless value
     ml_df = ml_df.drop(ml_df.index[0])
@@ -233,7 +237,7 @@ def large_ml_dataframe(y_df, ret_df, x1_df, x2_df, x3_df=0, x4_df=0, chunk_size=
     nb_chunks = round(len(permno) / chunk_size)
 
     # We initialize the dataframe that we want to return
-    large_ml_df = pd.DataFrame({'date': [19509658], 'target': [0], 'price_1m': [0], 'price_122': [0]})
+    large_ml_df = pd.DataFrame({'date': [19509658], 'PERMNO': [00000], 'target': [0], 'price_1m': [0], 'price_122': [0]})
     
     tstart = datetime.now()
     for k in range(nb_chunks):
@@ -247,39 +251,91 @@ def large_ml_dataframe(y_df, ret_df, x1_df, x2_df, x3_df=0, x4_df=0, chunk_size=
     rem_df = ml_dataframe(y_df=y_df, ret_df=ret_df, permno_list=permno[nb_chunks*chunk_size:],
                           x1_df=x1_df, x2_df=x2_df)
     large_ml_df = large_ml_df.append(rem_df, ignore_index=True, sort=False)
+    # We remove the first, useless value
+    large_ml_df = large_ml_df.drop(0)
+    large_ml_df = large_ml_df.reset_index(drop=True)
     return large_ml_df
 
-def fit_ml(ml_dataframe):
+def standardize(ml_dataframe):
+    """This function normalizes the X columns of the ml_dataframe. Note that since we use iloc, which is not a copy,
+    it directly modifies the original ml_dataframe."""
+    mean = ml_dataframe.iloc[:,3:].mean()
+    std = ml_dataframe.iloc[:,3:].std()
+    ml_dataframe.iloc[:,3:] = (ml_dataframe.iloc[:,3:]-mean)/std
 
-    print("FITTING ML")
+def fit_knn(ml_dataframe):
+
+    print("FITTING KNN")
     tstart = datetime.now()
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
-    clf = neighbors.KNeighborsClassifier(n_neighbors=3)
+    clf = neighbors.KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
     clf.fit(X, y)
 
-
-
-    #predictions = clf.predict(X)
-    #confidence = clf.score(X, y)
-    #print("Spread : ", Counter(predictions))
-    #print("Confidence : ", confidence)
-
-    outfile = open('pickle\knn', 'wb')
+    outfile = open('pickle/KNN', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
     tend = datetime.now() - tstart
     print("Finished in {} seconds.".format(tend.total_seconds()))
 
-def predict_ml(ml_dataframe):
+def fit_svc(ml_dataframe):
 
-    print("PREDICTING ML")
+    print("FITTING SVC")
+    tstart = datetime.now()
+    X = ml_dataframe[['price_1m', 'price_122']]
+    y = ml_dataframe['target']
+    clf = svm.LinearSVC()
+    clf.fit(X, y)
+
+    outfile = open('pickle/SVC', 'wb')
+    pickle.dump(clf, outfile)
+    outfile.close()
+
+    tend = datetime.now() - tstart
+    print("Finished in {} seconds.".format(tend.total_seconds()))
+
+def fit_rfc(ml_dataframe, max_depth=10):
+
+    print("FITTING RFC")
+    tstart = datetime.now()
+    X = ml_dataframe[['price_1m', 'price_122']]
+    y = ml_dataframe['target']
+    clf = RandomForestClassifier(n_estimators=10, max_depth=max_depth)
+    clf.fit(X, y)
+
+    outfile = open('pickle/RFC', 'wb')
+    pickle.dump(clf, outfile)
+    outfile.close()
+
+    tend = datetime.now() - tstart
+    print("Finished in {} seconds.".format(tend.total_seconds()))
+
+def fit_lr(ml_dataframe):
+
+    print("FITTING LR")
+    tstart = datetime.now()
+    X = ml_dataframe[['price_1m', 'price_122']]
+    y = ml_dataframe['target']
+    clf = LogisticRegression(solver="saga", multi_class="ovr", n_jobs=-1)
+    clf.fit(X, y)
+
+    outfile = open('pickle/LR', 'wb')
+    pickle.dump(clf, outfile)
+    outfile.close()
+
+    tend = datetime.now() - tstart
+    print("Finished in {} seconds.".format(tend.total_seconds()))
+
+
+def predict_knn(ml_dataframe):
+
+    print("PREDICTING KNN")
     tstart = datetime.now()
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle\knn', 'rb')
+    infile = open('pickle/KNN', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -291,12 +347,107 @@ def predict_ml(ml_dataframe):
     tend = datetime.now() - tstart
     print("Finished in {} seconds.".format(tend.total_seconds()))
 
-# data = pd.read_csv("little_test_data.csv")
-# tdf = transform_large_dataframe(data, chunk_size=2)
-# targets_df = get_targets(tdf)
-# cum_df = get_past_returns(tdf)
-# cl = large_ml_dataframe(targets_df, tdf, tdf, cum_df, chunk_size=2)
-# fit_ml(cl)
+    return predictions
+
+def predict_svc(ml_dataframe):
+
+    print("PREDICTING SVC")
+    tstart = datetime.now()
+    X = ml_dataframe[['price_1m', 'price_122']]
+    y = ml_dataframe['target']
+
+    infile = open('pickle/SVC', 'rb')
+    clf = pickle.load(infile)
+    infile.close()
+
+    predictions = clf.predict(X)
+    confidence = clf.score(X, y)
+    print("Spread : ", Counter(predictions))
+    print("Confidence : ", confidence)
+
+    tend = datetime.now() - tstart
+    print("Finished in {} seconds.".format(tend.total_seconds()))
+
+    return predictions
+
+def predict_rfc(ml_dataframe):
+
+    print("PREDICTING RFC")
+    tstart = datetime.now()
+    X = ml_dataframe[['price_1m', 'price_122']]
+    y = ml_dataframe['target']
+
+    infile = open('pickle/RFC', 'rb')
+    clf = pickle.load(infile)
+    infile.close()
+
+    predictions = clf.predict(X)
+    confidence = clf.score(X, y)
+    print("Spread : ", Counter(predictions))
+    print("Confidence : ", confidence)
+
+    tend = datetime.now() - tstart
+    print("Finished in {} seconds.".format(tend.total_seconds()))
+
+    return predictions
+
+def predict_lr(ml_dataframe):
+
+    print("PREDICTING LR")
+    tstart = datetime.now()
+    X = ml_dataframe[['price_1m', 'price_122']]
+    y = ml_dataframe['target']
+
+    infile = open('pickle/LR', 'rb')
+    clf = pickle.load(infile)
+    infile.close()
+
+    predictions = clf.predict(X)
+    confidence = clf.score(X, y)
+    print("Spread : ", Counter(predictions))
+    print("Confidence : ", confidence)
+
+    tend = datetime.now() - tstart
+    print("Finished in {} seconds.".format(tend.total_seconds()))
+
+    return predictions
+
+def aggregate_prediction(knn, svc, rfc, lr):
+    """This function makes the democratic vote of the different classifiers"""
+    votes_sum = knn+svc+rfc+lr
+    output = votes_sum[:]
+    for i in range(len(votes_sum)):
+        if votes_sum[i] <= -2:
+            output[i] = -1
+        elif -1 <= votes_sum[i] <= 1:
+            output[i] = 0
+        elif votes_sum[i] >= 2:
+            output[i] = 1
+
+    return output
+
+
+
+
+data = pd.read_csv("little_test_data.csv")
+tdf = transform_large_dataframe(data, chunk_size=2)
+targets_df = get_targets(tdf)
+cum_df = get_past_returns(tdf)
+cl = large_ml_dataframe(targets_df, tdf, tdf, cum_df, chunk_size=2)
+standardize(cl)
+fit_knn(cl)
+knn = predict_knn(cl)
+fit_svc(cl)
+svc = predict_svc(cl)
+fit_rfc(cl,20)
+rfc = predict_rfc(cl)
+fit_lr(cl)
+lr = predict_lr(cl)
+
+pred_column = pd.DataFrame(aggregate_prediction(knn, svc, rfc, lr), columns=['prediction'])
+cl = cl.join(pred_column, sort=False)
+new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
+
 
 
 # data = pd.read_csv("output_ret.csv", index_col=0)
@@ -305,9 +456,12 @@ def predict_ml(ml_dataframe):
 # # targets_df = pd.read_csv("targets_df.csv", index_col=0)
 # cl = large_ml_dataframe(targets_df, data, data, cum_df)
 # cl.to_csv("cl.csv")
-cl = pd.read_csv("cl.csv")
-fit_ml(cl)
-predict_ml(cl)
+# cl = pd.read_csv("cl.csv")
+# fit_ml(cl)
+# predict_ml(cl)
+
+# data = pd.read_csv("raw_data_full.csv")
+# tdf = transform_large_dataframe(data, chunk_size=200)
 
 
 
