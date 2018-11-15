@@ -53,14 +53,14 @@ def transform_large_dataframe(data, chunk_size, variable='RET'):
     nb_comp = len(data.PERMNO.unique().tolist())
     nb_chunks = int(nb_comp/chunk_size)
     # Initialization of the big dataframe that we will return, with the date column
-    big_table = pd.DataFrame(sorted(data.date.unique().tolist()), columns=['date'])
+    big_table = pd.DataFrame(data.date.unique().tolist(), columns=['date'])
     tstart = datetime.now()
     # Processing each chunk
     for i in range(nb_chunks):
-        tinter = datetime.now() - tstart
         transformed_subtable = transform_dataframe(data, k=i, chunk_size=chunk_size, variable=variable)
         transformed_subtable['date'] = transformed_subtable['date'].apply(int)
         big_table = big_table.merge(transformed_subtable, how='left', on='date')
+        tinter = datetime.now() - tstart
         print("{}/{} time: {}".format(i+1, nb_chunks, tinter.total_seconds()))
 
     # We still miss the remainder, not included in the integer number of chunks
@@ -70,10 +70,9 @@ def transform_large_dataframe(data, chunk_size, variable='RET'):
     remainder_subtable = transform_dataframe(data, k=0, chunk_size=nb_comp_left, variable=variable,
                                              rem_init_index=nb_chunks*chunk_size)
     remainder_subtable['date'] = remainder_subtable['date'].apply(int)
-    # remainder_subtable = pd.DataFrame(remainder_subtable, dtype="float32")
     big_table = big_table.merge(remainder_subtable, how='left', on='date')
     print("Remainder included")
-    print("Size of the dataframe : {}".format(big_table.shape))
+
     return big_table
 
 
@@ -209,7 +208,8 @@ def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
         y_df_subtable = y_df_subtable.merge(x1_df_subtable, how='left', on='date')
         y_df_subtable = y_df_subtable.merge(x2_df_subtable, how='left', on='date')
         # We append, but without the last value since there is no future price afterwards.
-        ml_df = ml_df.append(y_df_subtable[:-1], ignore_index=True, sort=False)
+        # And without the first value since there is no TwelveToTwo past return
+        ml_df = ml_df.append(y_df_subtable[1:-1], ignore_index=True, sort=False)
 
     # Deleting the first, useless value
     ml_df = ml_df.drop(ml_df.index[0])
@@ -414,6 +414,7 @@ def predict_lr(ml_dataframe):
 
 def aggregate_prediction(knn, svc, rfc, lr):
     """This function makes the democratic vote of the different classifiers"""
+    print("COMPUTING AGGREGATE PREDICTIONS")
     votes_sum = knn+svc+rfc+lr
     output = votes_sum[:]
     for i in range(len(votes_sum)):
@@ -426,14 +427,93 @@ def aggregate_prediction(knn, svc, rfc, lr):
 
     return output
 
+def aggregate_accuracy(agg_pred, ml_dataframe):
+    """This function gives the accuracy of our aggregate predictions."""
+    print("COMPUTING AGGREGATE ACCURACY")
+    counter = 0
+    for i in range(len(agg_pred)):
+        if agg_pred[i] == ml_dataframe.target[i]:
+            counter +=1
+
+    print("Accuracy : {}".format(counter/len(agg_pred)))
+
+def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_mcap, prediction_transformed_dataframe):
+    """This is the big function that will evaluate the performance of our investment strategy.
+    From now on, it is very standardized, so everything will be done inside this one function.
+    The inputs are simply the returns and market caps of the whole dataset, and the predicted choice of stocks."""
+
+    # We start by replacing all the NaNs by 0, since not investing or not existing is essentially the same here
+    prediction_transformed_dataframe[isnan(prediction_transformed_dataframe)] = 0
+    # We now change all the values to int, for faster comparison
+    prediction_transformed_dataframe = prediction_transformed_dataframe.astype("int64")
+
+    # We initialize the weights matrices, and set to 1 all stocks that we invest in.
+    # There are two portfolios here, one long and one short. We will subtract the returns later on.
+    weights_long = prediction_transformed_dataframe.copy()
+    weights_long[weights_long < 1] = 0
+
+    weights_short = prediction_transformed_dataframe.copy()
+    weights_short[weights_short > -1] = 0
+    weights_short[weights_short == -1] = 1
+    weights_short.date = weights_long.date # We reset the dates since they have disappeared in the previous operation.
+
+    # There is one subtlety : investment decision is based on past info, so if the stock does
+    # not exist anymore in the next month, then we will not be able to invest.
+
+    # We shift the index of the returns by 2. One because we have no prediction for the first month
+    # and one so as to shift the returns by 1 month and compare to investment decisions
+    shifted_transformed_dataframe_returns = transformed_dataframe_returns.iloc[2:].copy()
+    shifted_transformed_dataframe_returns = shifted_transformed_dataframe_returns.reset_index(drop=True)
+    # We make sure that the returns df is of native dtype, to use the isnan function later
+    shifted_transformed_dataframe_returns = shifted_transformed_dataframe_returns.astype("float64")
+    # Note that shifted_... and weights_... have the same shape
+
+    # We set to 0 investment decisions where there is no return in the next month.
+    weights_long[isnan(shifted_transformed_dataframe_returns)] = 0
+    weights_short[isnan(shifted_transformed_dataframe_returns)] = 0
+
+
+    # We now need to find the respective weights of all stocks, using a value-weighted approach.
+    # We calculate the relative weight of each chosen stock for each date
+
+    # Taking absolute value because certain stocks have neg price & resetting index for division
+    transformed_dataframe_mcap = transformed_dataframe_mcap.iloc[1:-1,1:].reset_index(drop=True).abs()
+    # Setting to 0 all mcaps of stocks that are not selected
+    transformed_dataframe_mcap_long = transformed_dataframe_mcap.copy()
+    transformed_dataframe_mcap_short = transformed_dataframe_mcap.copy()
+    transformed_dataframe_mcap_long[weights_long.iloc[:,1:] == 0] = 0
+    transformed_dataframe_mcap_short[weights_short.iloc[:, 1:] == 0] = 0
+    # Dividing
+    weights_long.iloc[:,1:] = transformed_dataframe_mcap_long.divide(transformed_dataframe_mcap_long.sum(axis=1), axis='index')
+    weights_short.iloc[:, 1:] = transformed_dataframe_mcap_short.divide(transformed_dataframe_mcap_short.sum(axis=1), axis='index')
+
+    # We now want to calculate the performance of our two portfolios
+    returns_df_long = shifted_transformed_dataframe_returns.iloc[:,1:].multiply(weights_long.iloc[:,1:], fill_value=0)
+    returns_df_short = shifted_transformed_dataframe_returns.iloc[:,1:].multiply(weights_short.iloc[:, 1:], fill_value=0)
+
+    # We compute the return for each date as the sum of the elements of that row
+    performance_long = returns_df_long.sum(axis=1)
+    performance_short = returns_df_short.sum(axis=1)
+
+    performance = (performance_long-performance_short).mean()
+
+    return performance
 
 
 
 data = pd.read_csv("little_test_data.csv")
-tdf = transform_large_dataframe(data, chunk_size=2)
-targets_df = get_targets(tdf)
-cum_df = get_past_returns(tdf)
-cl = large_ml_dataframe(targets_df, tdf, tdf, cum_df, chunk_size=2)
+tdf_ret = transform_large_dataframe(data, chunk_size=2)
+tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=2)
+tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=2)
+
+# Obtaining the market caps
+
+tdf_mcap = tdf_shrout.copy()
+tdf_mcap.iloc[:,1:] = tdf_shrout.iloc[:,1:]*tdf_prc.iloc[:,1:]
+
+targets_df = get_targets(tdf_ret)
+cum_df = get_past_returns(tdf_ret)
+cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=2)
 standardize(cl)
 fit_knn(cl)
 knn = predict_knn(cl)
@@ -444,9 +524,14 @@ rfc = predict_rfc(cl)
 fit_lr(cl)
 lr = predict_lr(cl)
 
-pred_column = pd.DataFrame(aggregate_prediction(knn, svc, rfc, lr), columns=['prediction'])
+aggpred = aggregate_prediction(knn, svc, rfc, lr)
+aggregate_accuracy(aggpred, cl)
+
+pred_column = pd.DataFrame(aggpred, columns=['prediction'])
 cl = cl.join(pred_column, sort=False)
 new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
+
+performance = portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
 
 
 
