@@ -22,7 +22,7 @@ def transform_dataframe(data_frame, k=0, chunk_size=0, variable='RET', rem_init_
     # get a list of the company PERMNOs and get the number of dates
     permno = data_frame.PERMNO.unique().tolist()
     all_dates = data_frame.date.unique().tolist()
-    nb_comp = len(permno) # Was used when we merged all the companies at once
+    nb_comp = len(permno)  # Was used when we merged all the companies at once
     # We start by defining the values for k and chunk in case it is not specified
     if chunk_size == 0:
         chunk_size = nb_comp
@@ -47,6 +47,7 @@ def transform_dataframe(data_frame, k=0, chunk_size=0, variable='RET', rem_init_
     table = pd.DataFrame(extracted_data.values, columns=['date'] + permno[(k*chunk_size)+rem_init_index:
                                                                           ((k+1)*chunk_size)+rem_init_index])
     return table
+
 
 def transform_large_dataframe(data, chunk_size, variable='RET'):
     """Use this function instead of transform_dataframe if the imported data is large."""
@@ -108,7 +109,7 @@ def labelize_bsh(*args, threshold=0.02):
     return 0
 
 
-def get_targets(df, nb_months=7):
+def get_targets(df):
     """This function will create the targets for each date, based on the future returns
     for the next 7 days, and pass them to labelize_bsh. The input df has to be a transformed dataframe."""
     print("GET TARGETS")
@@ -123,44 +124,51 @@ def get_targets(df, nb_months=7):
     for i in range(len(permno)):
         fut_ret = get_future_returns(df, permno[i], nb_months=7)
         targets_df[permno[i]] = list(map(labelize_bsh,
-                                        fut_ret['1m'].astype(float),
-                                        fut_ret['2m'].astype(float),
-                                        fut_ret['3m'].astype(float),
-                                        fut_ret['4m'].astype(float),
-                                        fut_ret['5m'].astype(float),
-                                        fut_ret['6m'].astype(float),
-                                        fut_ret['7m'].astype(float)))
-        if (i % 320 == 0):
+                                         fut_ret['1m'].astype(float),
+                                         fut_ret['2m'].astype(float),
+                                         fut_ret['3m'].astype(float),
+                                         fut_ret['4m'].astype(float),
+                                         fut_ret['5m'].astype(float),
+                                         fut_ret['6m'].astype(float),
+                                         fut_ret['7m'].astype(float)))
+        if i % 320 == 0:
             print("{}%".format(round(i / len(permno) * 100)))
     tend = datetime.now() - tstart
     print("time: {}".format(tend.total_seconds()))
     return targets_df
 
+
 def get_past_returns(df):
-    '''This function will calculate the cumulative return of an asset over the past 11 months, but not including
+    """This function will calculate the cumulative return of an asset over the past 11 months, but not including
     the current month's return, to better separate momentum from reverse momentum.
-    The only input is the transformer return df, the output has the same shape.'''
+    The only input is the transformer return df, the output has the same shape."""
+
     print("GET_PAST_RETURNS")
     # We create the function that computes the cumret for a specific column
+
     def get_past_returns_col(column):
         # Adding one to get factors
         col = (column.astype("float32")+1).values.tolist()
         # We have to use slices in order to point to a new object
         cumcol = col[:]
         # No built-in product function
+
         def prod(iterable):
             return functools.reduce(operator.mul, iterable, 1)
 
         # For the first eleven columns we have to do the cumret on less values
         # The last truncated cumret is at i = 10,
-        if isnan(col[0]): col[0] = 1
-        for i in range(1,11):
-            if isnan(col[i]):col[i] = 1
+        if isnan(col[0]):
+            col[0] = 1
+        for i in range(1, 11):
+            if isnan(col[i]):
+                col[i] = 1
             cumcol[i] = prod(col[0:i])
 
         # After that we do on the 11 values before
-        for i in range(11,len(col)):
-            if isnan(col[i]):col[i] = 1
+        for i in range(11, len(col)):
+            if isnan(col[i]):
+                col[i] = 1
             cumcol[i] = prod(col[i-11:i])
 
         cumcol[0] = 1
@@ -173,7 +181,8 @@ def get_past_returns(df):
 
     return df
 
-def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
+
+def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df):
     """This function will prepare the dataframe on which we can do actual ML. The output format resembles
     the one from the initial WRDS input. For every target (first column), we can learn to predict it with 
     the data in the following columns from the same row. ret_df is used for logical indexing, so as to
@@ -181,7 +190,6 @@ def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
 
     # We initialize the dataframe that we want to return
     ml_df = pd.DataFrame({'date': [19509658], 'PERMNO': [00000], 'target': [0], 'price_1m': [0], 'price_122': [0]})
-    
     
     for i in range(len(permno_list)):
         # We start by finding the portion of the targets which corresponds to actual returns.
@@ -205,7 +213,7 @@ def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
         x1_df_subtable = x1_df_subtable.rename(index=str, columns={"date": "date", permno_list[i]: "price_1m", })
         x2_df_subtable = x2_df_subtable.rename(index=str, columns={"date": "date", permno_list[i]: "price_122", })
         # The column of permnos
-        y_df_subtable = y_df_subtable.assign(PERMNO = [permno_list[i] for t in range(len(y_df_subtable))])
+        y_df_subtable = y_df_subtable.assign(PERMNO=[permno_list[i] for t in range(len(y_df_subtable))])
         # Merging
         y_df_subtable = y_df_subtable.merge(x1_df_subtable, how='left', on='date')
         y_df_subtable = y_df_subtable.merge(x2_df_subtable, how='left', on='date')
@@ -219,7 +227,7 @@ def ml_dataframe(y_df, ret_df, permno_list, x1_df, x2_df, x3_df=0, x4_df=0):
     return ml_df
 
 
-def large_ml_dataframe(y_df, ret_df, x1_df, x2_df, x3_df=0, x4_df=0, chunk_size=320):
+def large_ml_dataframe(y_df, ret_df, x1_df, x2_df, chunk_size=320):
     """Similarly as with the transform_large_dataframe, we need to divide the process into chunks.
     As inputs, y_df is indexed on dates, the other dataframes are not."""
     print("LARGE ML DATAFRAME")
@@ -239,7 +247,8 @@ def large_ml_dataframe(y_df, ret_df, x1_df, x2_df, x3_df=0, x4_df=0, chunk_size=
     nb_chunks = round(len(permno) / chunk_size)
 
     # We initialize the dataframe that we want to return
-    large_ml_df = pd.DataFrame({'date': [19509658], 'PERMNO': [00000], 'target': [0], 'price_1m': [0], 'price_122': [0]})
+    large_ml_df = pd.DataFrame({'date': [19509658], 'PERMNO': [00000], 'target': [0], 'price_1m': [0],
+                                'price_122': [0]})
     
     tstart = datetime.now()
     for k in range(nb_chunks):
@@ -258,12 +267,14 @@ def large_ml_dataframe(y_df, ret_df, x1_df, x2_df, x3_df=0, x4_df=0, chunk_size=
     large_ml_df = large_ml_df.reset_index(drop=True)
     return large_ml_df
 
+
 def standardize(ml_dataframe):
     """This function normalizes the X columns of the ml_dataframe. Note that since we use iloc, which is not a copy,
     it directly modifies the original ml_dataframe."""
-    mean = ml_dataframe.iloc[:,3:].mean()
-    std = ml_dataframe.iloc[:,3:].std()
-    ml_dataframe.iloc[:,3:] = (ml_dataframe.iloc[:,3:]-mean)/std
+    mean = ml_dataframe.iloc[:, 3:].mean()
+    std = ml_dataframe.iloc[:, 3:].std()
+    ml_dataframe.iloc[:, 3:] = (ml_dataframe.iloc[:, 3:]-mean)/std
+
 
 def fit_knn(ml_dataframe):
 
@@ -281,6 +292,7 @@ def fit_knn(ml_dataframe):
     tend = datetime.now() - tstart
     print("Finished in {} seconds.".format(tend.total_seconds()))
 
+
 def fit_svc(ml_dataframe):
 
     print("FITTING SVC")
@@ -297,6 +309,7 @@ def fit_svc(ml_dataframe):
     tend = datetime.now() - tstart
     print("Finished in {} seconds.".format(tend.total_seconds()))
 
+
 def fit_rfc(ml_dataframe, max_depth=10):
 
     print("FITTING RFC")
@@ -312,6 +325,7 @@ def fit_rfc(ml_dataframe, max_depth=10):
 
     tend = datetime.now() - tstart
     print("Finished in {} seconds.".format(tend.total_seconds()))
+
 
 def fit_lr(ml_dataframe):
 
@@ -351,6 +365,7 @@ def predict_knn(ml_dataframe):
 
     return predictions
 
+
 def predict_svc(ml_dataframe):
 
     print("PREDICTING SVC")
@@ -371,6 +386,7 @@ def predict_svc(ml_dataframe):
     print("Finished in {} seconds.".format(tend.total_seconds()))
 
     return predictions
+
 
 def predict_rfc(ml_dataframe):
 
@@ -393,6 +409,7 @@ def predict_rfc(ml_dataframe):
 
     return predictions
 
+
 def predict_lr(ml_dataframe):
 
     print("PREDICTING LR")
@@ -414,6 +431,7 @@ def predict_lr(ml_dataframe):
 
     return predictions
 
+
 def aggregate_prediction(knn, svc, rfc, lr):
     """This function makes the democratic vote of the different classifiers"""
     print("COMPUTING AGGREGATE PREDICTIONS")
@@ -429,15 +447,17 @@ def aggregate_prediction(knn, svc, rfc, lr):
 
     return output
 
+
 def aggregate_accuracy(agg_pred, ml_dataframe):
     """This function gives the accuracy of our aggregate predictions."""
     print("COMPUTING AGGREGATE ACCURACY")
     counter = 0
     for i in range(len(agg_pred)):
         if agg_pred[i] == ml_dataframe.target[i]:
-            counter +=1
+            counter += 1
 
     print("Accuracy : {}".format(counter/len(agg_pred)))
+
 
 def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_mcap, prediction_transformed_dataframe):
     """This is the big function that will evaluate the performance of our investment strategy.
@@ -474,16 +494,15 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     weights_long[isnan(shifted_transformed_dataframe_returns)] = 0
     weights_short[isnan(shifted_transformed_dataframe_returns)] = 0
 
-
     # We now need to find the respective weights of all stocks, using a value-weighted approach.
     # We calculate the relative weight of each chosen stock for each date
 
     # Taking absolute value because certain stocks have neg price & resetting index for division
-    transformed_dataframe_mcap = transformed_dataframe_mcap.iloc[1:-1,1:].reset_index(drop=True).abs()
+    transformed_dataframe_mcap = transformed_dataframe_mcap.iloc[1:-1, 1:].reset_index(drop=True).abs()
     # Setting to 0 all mcaps of stocks that are not selected
     transformed_dataframe_mcap_long = transformed_dataframe_mcap.copy()
     transformed_dataframe_mcap_short = transformed_dataframe_mcap.copy()
-    transformed_dataframe_mcap_long[weights_long.iloc[:,1:] == 0] = 0
+    transformed_dataframe_mcap_long[weights_long.iloc[:, 1:] == 0] = 0
     transformed_dataframe_mcap_short[weights_short.iloc[:, 1:] == 0] = 0
 
     # We include a measure for the transaction costs
@@ -492,16 +511,15 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     # The shifted matrix is multiplied by 2 and then add it to the original weight matrix
     # If the sum is -3, 0 or 3 , then weights have not changed. Otherwise we have a tx cost.
 
-    weights_long_shifted = weights_long.iloc[1:,1:].copy().reset_index(drop=True)
-    weights_long_combined = weights_long_shifted*2 + weights_long.iloc[:-1,1:]
+    weights_long_shifted = weights_long.iloc[1:, 1:].copy().reset_index(drop=True)
+    weights_long_combined = weights_long_shifted*2 + weights_long.iloc[:-1, 1:]
 
+    weights_short_shifted = weights_short.iloc[1:, 1:].copy().reset_index(drop=True)
+    weights_short_combined = weights_short_shifted*2 + weights_short.iloc[:-1, 1:]
 
-    weights_short_shifted = weights_short.iloc[1:,1:].copy().reset_index(drop=True)
-    weights_short_combined = weights_short_shifted*2 + weights_short.iloc[:-1,1:]
-
-    tx_costs_weights_long = weights_long_combined.copy() # just for the shape
+    tx_costs_weights_long = weights_long_combined.copy()  # just for the shape
     tx_costs_weights_long[:] = 1
-    tx_costs_weights_short = weights_short_combined.copy() # just for the shape
+    tx_costs_weights_short = weights_short_combined.copy()  # just for the shape
     tx_costs_weights_short[:] = 1
 
     tx_costs_weights_long[weights_long_combined == 3] = 0
@@ -526,8 +544,8 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     weights_long_shifted = weights_long.iloc[1:, 1:].copy().reset_index(drop=True)
     weights_short_shifted = weights_short.iloc[1:, 1:].copy().reset_index(drop=True)
 
-    weights_long_turnover = (weights_long_shifted - weights_long.iloc[:-1,1:]).abs()
-    weights_short_turnover = (weights_short_shifted - weights_short.iloc[:-1,1:]).abs()
+    weights_long_turnover = (weights_long_shifted - weights_long.iloc[:-1, 1:]).abs()
+    weights_short_turnover = (weights_short_shifted - weights_short.iloc[:-1, 1:]).abs()
 
     # Gives us the period turnover ratio
     turnover_long = weights_long_turnover.sum(axis=1)
@@ -538,13 +556,10 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     tx_costs_long = (1+turnover_long)*nb_tx_long*0.0001
     tx_costs_short = (1+turnover_short)*nb_tx_short*0.0001
 
-
-
     # We now want to calculate the performance of our two portfolios
-    returns_df_long = shifted_transformed_dataframe_returns.iloc[:,1:].multiply(weights_long.iloc[:,1:], fill_value=0)
-    returns_df_short = shifted_transformed_dataframe_returns.iloc[:,1:].multiply(weights_short.iloc[:, 1:], fill_value=0)
-
-
+    returns_df_long = shifted_transformed_dataframe_returns.iloc[:, 1:].multiply(weights_long.iloc[:, 1:], fill_value=0)
+    returns_df_short = shifted_transformed_dataframe_returns.iloc[:, 1:].multiply(weights_short.iloc[:, 1:],
+                                                                                  fill_value=0)
     # We compute the return for each date as the sum of the elements of that row (weighted sum)
     performance_long = returns_df_long.sum(axis=1)
     performance_short = returns_df_short.sum(axis=1)
@@ -555,6 +570,7 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
 
     return performance_series
 
+
 def performance_analysis(portfolio_series):
     """This function will derive several things from the portfolio returns,
     The input is the portfolio returns and the outputs can be seen in the print statement."""
@@ -564,7 +580,7 @@ def performance_analysis(portfolio_series):
     # We do not include the first and last value of our period since we have no portfolio at that time
     print("date2007")
     fama_french_factors = fama_raw.loc[(fama_raw["date"] > 200701) & (fama_raw["date"] < 201806),
-                                   ["date","Mkt-RF","SMB","HML","RF"]].reset_index(drop=True)/100
+                                       ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True)/100
 
     # Total return
     # No built-in product function
@@ -579,8 +595,9 @@ def performance_analysis(portfolio_series):
     std = portfolio_series.std()
 
     # Sharpe Ratio
-    monthly_sharpe_ratio = (portfolio_series-fama_french_factors["RF"]).mean()/(portfolio_series-fama_french_factors["RF"]).std()
-    yearly_sharpe_ratio = monthly_sharpe_ratio*math.sqrt(12) # This shortcup implies normal returns -> not very realistic
+    monthly_sharpe_ratio = (portfolio_series-fama_french_factors["RF"]).mean()\
+        / (portfolio_series-fama_french_factors["RF"]).std()
+    yearly_sharpe_ratio = monthly_sharpe_ratio*math.sqrt(12)  # Shortcup implies normal returns -> not very realistic
 
     # Alpha/Betas, including significance tests - from stackexchange
     X = fama_french_factors[['Mkt-RF', 'SMB', 'HML']]
@@ -599,14 +616,23 @@ def performance_analysis(portfolio_series):
 
     p_values = [2 * (1 - stats.t.cdf(np.abs(i), (len(newX) - 1))) for i in ts_b]
 
-    sd_b = np.round(sd_b, 3)
-    ts_b = np.round(ts_b, 3)
     p_values = np.round(p_values, 3)
     params = np.round(params, 4)
 
-    reg_tab = pd.DataFrame()
-    reg_tab["Coefficients"], reg_tab["Standard Errors"], reg_tab["t values"], reg_tab["Probabilites"] = [params, sd_b, ts_b,
-                                                                                                 p_values]
+    # Maximum Drawdown - from Stackexchange
+
+    def max_drawdown(X):
+        mdd = 0
+        peak = X[0]
+        for x in X:
+            if x > peak:
+                peak = x
+            dd = (peak - x) / peak
+            if dd > mdd:
+                mdd = dd
+        return mdd
+    max_dd = max_drawdown((1+portfolio_series).cumprod())
+
     # Graphing the cumulative product of returns
     plt.plot(fama_french_factors["date"].astype(str), (1+portfolio_series).cumprod())
     plt.legend(['Portfolio'])
@@ -616,10 +642,10 @@ def performance_analysis(portfolio_series):
     plt.show()
 
     summary = pd.DataFrame()
-    summary["##"] = ["Total Return", "Average Monthly Return", "Standard deviation",
-                         "Monthly Sharpe Ratio", "Annualized Sharpe Ratio", "Alpha", "Alpha P-value"]
+    summary["##"] = ["Total Return", "Average Monthly Return", "Monthly Standard deviation",
+                     "Monthly Sharpe Ratio", "Annualized Sharpe Ratio", "Alpha", "Alpha P-value", "Maximum Drawdown"]
     summary["Values"] = [tot_ret, avg_ret, std, monthly_sharpe_ratio, yearly_sharpe_ratio,
-                                params[0], p_values[0]]
+                         params[0], p_values[0], max_dd]
     summary.set_index("##", inplace=True)
 
     print(summary)
@@ -627,10 +653,11 @@ def performance_analysis(portfolio_series):
     return summary
 
 
+# ------------------------------------------------------------------------------------------------------------------
 
-
-
-tstart = datetime.now()
+print("-----------------------START OF LOG-----------------------------")
+print("")
+t_total_start = datetime.now()
 
 data = pd.read_csv("little_test_data.csv")
 tdf_ret = transform_large_dataframe(data, chunk_size=2)
@@ -640,7 +667,7 @@ tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=2)
 # Obtaining the market caps
 
 tdf_mcap = tdf_shrout.copy()
-tdf_mcap.iloc[:,1:] = tdf_shrout.iloc[:,1:]*tdf_prc.iloc[:,1:]
+tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
 
 targets_df = get_targets(tdf_ret)
 cum_df = get_past_returns(tdf_ret)
@@ -650,7 +677,7 @@ fit_knn(cl)
 knn = predict_knn(cl)
 fit_svc(cl)
 svc = predict_svc(cl)
-fit_rfc(cl,20)
+fit_rfc(cl, 20)
 rfc = predict_rfc(cl)
 fit_lr(cl)
 lr = predict_lr(cl)
@@ -662,11 +689,15 @@ pred_column = pd.DataFrame(aggpred, columns=['prediction'])
 cl = cl.join(pred_column, sort=False)
 new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
 
-performance= portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
-perf = performance_analysis(performance)
+performance = portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
 
-tend = datetime.now() - tstart
-print("Total Elapsed Time : {} seconds.".format(tend.total_seconds()))
+print("")
+print("-----------------------END OF LOG-----------------------------")
+print("")
+t_total_end = datetime.now() - t_total_start
+print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
+
+perf = performance_analysis(performance)
 
 
 # data = pd.read_csv("output_ret.csv", index_col=0)
