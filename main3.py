@@ -1,13 +1,15 @@
 from collections import Counter
 from datetime import datetime
 import functools
+import math
+import matplotlib.pyplot as plt
 import numpy as np
 import operator
 import pandas as pd
 import pickle
-from scipy import isnan
+from scipy import isnan, stats
 from sklearn import svm, neighbors
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 import warnings
@@ -103,7 +105,7 @@ def labelize_bsh(*args, threshold=0.02):
             return 1
         if future_returns_col < -threshold:
             return -1
-        return 0
+    return 0
 
 
 def get_targets(df, nb_months=7):
@@ -439,8 +441,8 @@ def aggregate_accuracy(agg_pred, ml_dataframe):
 
 def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_mcap, prediction_transformed_dataframe):
     """This is the big function that will evaluate the performance of our investment strategy.
-    From now on, it is very standardized, so everything will be done inside this one function.
-    The inputs are simply the returns and market caps of the whole dataset, and the predicted choice of stocks."""
+    The inputs are simply the returns and market caps of the whole dataset, and the predicted choice of stocks.
+    The output is the time-series of returns of the formed long-short portfolio."""
 
     # We start by replacing all the NaNs by 0, since not investing or not existing is essentially the same here
     prediction_transformed_dataframe[isnan(prediction_transformed_dataframe)] = 0
@@ -483,23 +485,152 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     transformed_dataframe_mcap_short = transformed_dataframe_mcap.copy()
     transformed_dataframe_mcap_long[weights_long.iloc[:,1:] == 0] = 0
     transformed_dataframe_mcap_short[weights_short.iloc[:, 1:] == 0] = 0
-    # Dividing
-    weights_long.iloc[:,1:] = transformed_dataframe_mcap_long.divide(transformed_dataframe_mcap_long.sum(axis=1), axis='index')
-    weights_short.iloc[:, 1:] = transformed_dataframe_mcap_short.divide(transformed_dataframe_mcap_short.sum(axis=1), axis='index')
+
+    # We include a measure for the transaction costs
+    # We first look at the number of transactions
+    # It works the following way : we create a copy of each weight matrix and shift it by 1 period
+    # The shifted matrix is multiplied by 2 and then add it to the original weight matrix
+    # If the sum is -3, 0 or 3 , then weights have not changed. Otherwise we have a tx cost.
+
+    weights_long_shifted = weights_long.iloc[1:,1:].copy().reset_index(drop=True)
+    weights_long_combined = weights_long_shifted*2 + weights_long.iloc[:-1,1:]
+
+
+    weights_short_shifted = weights_short.iloc[1:,1:].copy().reset_index(drop=True)
+    weights_short_combined = weights_short_shifted*2 + weights_short.iloc[:-1,1:]
+
+    tx_costs_weights_long = weights_long_combined.copy() # just for the shape
+    tx_costs_weights_long[:] = 1
+    tx_costs_weights_short = weights_short_combined.copy() # just for the shape
+    tx_costs_weights_short[:] = 1
+
+    tx_costs_weights_long[weights_long_combined == 3] = 0
+    tx_costs_weights_long[weights_long_combined == 0] = 0
+    tx_costs_weights_long[weights_long_combined == -3] = 0
+
+    tx_costs_weights_short[weights_short_combined == 3] = 0
+    tx_costs_weights_short[weights_short_combined == 0] = 0
+    tx_costs_weights_short[weights_short_combined == -3] = 0
+
+    nb_tx_long = tx_costs_weights_long.sum(axis=1)
+    nb_tx_short = tx_costs_weights_short.sum(axis=1)
+
+    # We calculate the market-cap-weighted weight of each stock, aka value-weighted approach
+    weights_long.iloc[:, 1:] = transformed_dataframe_mcap_long.divide(transformed_dataframe_mcap_long.sum(axis=1),
+                                                                      axis='index')
+    weights_short.iloc[:, 1:] = transformed_dataframe_mcap_short.divide(transformed_dataframe_mcap_short.sum(axis=1),
+                                                                        axis='index')
+
+    # We then calculate the difference in weights btw 2 periods, which also impacts the tx costs
+    # This has to be done after the value-weighting
+    weights_long_shifted = weights_long.iloc[1:, 1:].copy().reset_index(drop=True)
+    weights_short_shifted = weights_short.iloc[1:, 1:].copy().reset_index(drop=True)
+
+    weights_long_turnover = (weights_long_shifted - weights_long.iloc[:-1,1:]).abs()
+    weights_short_turnover = (weights_short_shifted - weights_short.iloc[:-1,1:]).abs()
+
+    # Gives us the period turnover ratio
+    turnover_long = weights_long_turnover.sum(axis=1)
+    turnover_short = weights_short_turnover.sum(axis=1)
+    # Remark : the combined change of absolute weights can be maximum 2 in case of "complete turnover"
+
+    # we calculate the tx costs in terms of percentage
+    tx_costs_long = (1+turnover_long)*nb_tx_long*0.0001
+    tx_costs_short = (1+turnover_short)*nb_tx_short*0.0001
+
+
 
     # We now want to calculate the performance of our two portfolios
     returns_df_long = shifted_transformed_dataframe_returns.iloc[:,1:].multiply(weights_long.iloc[:,1:], fill_value=0)
     returns_df_short = shifted_transformed_dataframe_returns.iloc[:,1:].multiply(weights_short.iloc[:, 1:], fill_value=0)
 
-    # We compute the return for each date as the sum of the elements of that row
+
+    # We compute the return for each date as the sum of the elements of that row (weighted sum)
     performance_long = returns_df_long.sum(axis=1)
     performance_short = returns_df_short.sum(axis=1)
 
-    performance = (performance_long-performance_short).mean()
+    performance_series = (performance_long-performance_short)
+    performance_series = performance_series.sub(tx_costs_long, fill_value=0)
+    performance_series = performance_series.sub(tx_costs_short, fill_value=0)
 
-    return performance
+    return performance_series
+
+def performance_analysis(portfolio_series):
+    """This function will derive several things from the portfolio returns,
+    The input is the portfolio returns and the outputs can be seen in the print statement."""
+    # Importing Fama-French 3 factors
+    fama_raw = pd.read_csv("fama_french3.csv")
+    # Extracting the dates we want and dividing by 100 since Ken French data is in "full" percentage
+    # We do not include the first and last value of our period since we have no portfolio at that time
+    print("date2007")
+    fama_french_factors = fama_raw.loc[(fama_raw["date"] > 200701) & (fama_raw["date"] < 201806),
+                                   ["date","Mkt-RF","SMB","HML","RF"]].reset_index(drop=True)/100
+
+    # Total return
+    # No built-in product function
+    def prod(iterable):
+        return functools.reduce(operator.mul, iterable, 1)
+    tot_ret = prod(portfolio_series+1)-1
+
+    # Average return
+    avg_ret = portfolio_series.mean()
+
+    # Monthly standard deviation
+    std = portfolio_series.std()
+
+    # Sharpe Ratio
+    monthly_sharpe_ratio = (portfolio_series-fama_french_factors["RF"]).mean()/(portfolio_series-fama_french_factors["RF"]).std()
+    yearly_sharpe_ratio = monthly_sharpe_ratio*math.sqrt(12) # This shortcup implies normal returns -> not very realistic
+
+    # Alpha/Betas, including significance tests - from stackexchange
+    X = fama_french_factors[['Mkt-RF', 'SMB', 'HML']]
+    y = portfolio_series
+    lm = LinearRegression()
+    lm.fit(X, y)
+    params = np.append(lm.intercept_, lm.coef_)
+    predictions = lm.predict(X)
+
+    newX = pd.DataFrame({"Constant": np.ones(len(X))}).join(pd.DataFrame(X))
+    mse = (sum((y - predictions) ** 2)) / (len(newX) - len(newX.columns))
+
+    var_b = mse * (np.linalg.inv(np.dot(newX.T, newX)).diagonal())
+    sd_b = np.sqrt(var_b)
+    ts_b = params / sd_b
+
+    p_values = [2 * (1 - stats.t.cdf(np.abs(i), (len(newX) - 1))) for i in ts_b]
+
+    sd_b = np.round(sd_b, 3)
+    ts_b = np.round(ts_b, 3)
+    p_values = np.round(p_values, 3)
+    params = np.round(params, 4)
+
+    reg_tab = pd.DataFrame()
+    reg_tab["Coefficients"], reg_tab["Standard Errors"], reg_tab["t values"], reg_tab["Probabilites"] = [params, sd_b, ts_b,
+                                                                                                 p_values]
+    # Graphing the cumulative product of returns
+    plt.plot(fama_french_factors["date"].astype(str), (1+portfolio_series).cumprod())
+    plt.legend(['Portfolio'])
+    plt.xticks(rotation=90)
+    # Show one date per year only
+    plt.xticks(np.arange(0, 136, step=12))
+    plt.show()
+
+    summary = pd.DataFrame()
+    summary["##"] = ["Total Return", "Average Monthly Return", "Standard deviation",
+                         "Monthly Sharpe Ratio", "Annualized Sharpe Ratio", "Alpha", "Alpha P-value"]
+    summary["Values"] = [tot_ret, avg_ret, std, monthly_sharpe_ratio, yearly_sharpe_ratio,
+                                params[0], p_values[0]]
+    summary.set_index("##", inplace=True)
+
+    print(summary)
+
+    return summary
 
 
+
+
+
+tstart = datetime.now()
 
 data = pd.read_csv("little_test_data.csv")
 tdf_ret = transform_large_dataframe(data, chunk_size=2)
@@ -531,8 +662,11 @@ pred_column = pd.DataFrame(aggpred, columns=['prediction'])
 cl = cl.join(pred_column, sort=False)
 new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
 
-performance = portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
+performance= portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
+perf = performance_analysis(performance)
 
+tend = datetime.now() - tstart
+print("Total Elapsed Time : {} seconds.".format(tend.total_seconds()))
 
 
 # data = pd.read_csv("output_ret.csv", index_col=0)
