@@ -285,7 +285,7 @@ def fit_knn(ml_dataframe):
     clf = neighbors.KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
     clf.fit(X, y)
 
-    outfile = open('pickle/KNN', 'wb')
+    outfile = open('pickle/full/naive/KNN', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -302,7 +302,7 @@ def fit_svc(ml_dataframe):
     clf = svm.LinearSVC()
     clf.fit(X, y)
 
-    outfile = open('pickle/SVC', 'wb')
+    outfile = open('pickle/full/naive/SVC', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -310,7 +310,7 @@ def fit_svc(ml_dataframe):
     print("Finished in {} seconds.".format(tend.total_seconds()))
 
 
-def fit_rfc(ml_dataframe, max_depth=10):
+def fit_rfc(ml_dataframe, max_depth=1000):
 
     print("FITTING RFC")
     tstart = datetime.now()
@@ -319,7 +319,7 @@ def fit_rfc(ml_dataframe, max_depth=10):
     clf = RandomForestClassifier(n_estimators=10, max_depth=max_depth)
     clf.fit(X, y)
 
-    outfile = open('pickle/RFC', 'wb')
+    outfile = open('pickle/full/naive/RFC', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -336,7 +336,7 @@ def fit_lr(ml_dataframe):
     clf = LogisticRegression(solver="saga", multi_class="ovr", n_jobs=-1)
     clf.fit(X, y)
 
-    outfile = open('pickle/LR', 'wb')
+    outfile = open('pickle/full/naive/LR', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -351,7 +351,7 @@ def predict_knn(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/KNN', 'rb')
+    infile = open('pickle/full/naive/KNN', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -373,7 +373,7 @@ def predict_svc(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/SVC', 'rb')
+    infile = open('pickle/full/naive/SVC', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -395,7 +395,7 @@ def predict_rfc(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/RFC', 'rb')
+    infile = open('pickle/full/naive/RFC', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -417,7 +417,7 @@ def predict_lr(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/LR', 'rb')
+    infile = open('pickle/full/naive/LR', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -654,15 +654,81 @@ def performance_analysis(portfolio_series):
 
 
 # ------------------------------------------------------------------------------------------------------------------
+# # The small dataset
+#
+# print("-----------------------START OF LOG-----------------------------")
+# print("")
+# t_total_start = datetime.now()
+#
+# data = pd.read_csv("little_test_data.csv")
+# tdf_ret = transform_large_dataframe(data, chunk_size=2)
+# tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=2)
+# tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=2)
+#
+# # Obtaining the market caps
+#
+# tdf_mcap = tdf_shrout.copy()
+# tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
+#
+# targets_df = get_targets(tdf_ret)
+# cum_df = get_past_returns(tdf_ret)
+# cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=2)
+# standardize(cl)
+# fit_knn(cl)
+# knn = predict_knn(cl)
+# fit_svc(cl)
+# svc = predict_svc(cl)
+# fit_rfc(cl, 20)
+# rfc = predict_rfc(cl)
+# fit_lr(cl)
+# lr = predict_lr(cl)
+#
+# aggpred = aggregate_prediction(knn, svc, rfc, lr)
+# aggregate_accuracy(aggpred, cl)
+#
+# pred_column = pd.DataFrame(aggpred, columns=['prediction'])
+# cl = cl.join(pred_column, sort=False)
+# new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
+#
+# performance = portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
+#
+# print("")
+# print("-----------------------END OF LOG-----------------------------")
+# print("")
+# t_total_end = datetime.now() - t_total_start
+# print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
+#
+# perf = performance_analysis(performance)
+
+
+
+
+# ------------------------------------------------------------------------------------------------------------------
+# The whole dataset
 
 print("-----------------------START OF LOG-----------------------------")
 print("")
 t_total_start = datetime.now()
 
-data = pd.read_csv("little_test_data.csv")
-tdf_ret = transform_large_dataframe(data, chunk_size=2)
-tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=2)
-tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=2)
+# data = pd.read_csv("output_ret.csv", index_col=0)
+# targets_df = get_targets(data)
+# cum_df = get_past_returns(data)
+# # targets_df = pd.read_csv("targets_df.csv", index_col=0)
+# cl = large_ml_dataframe(targets_df, data, data, cum_df)
+# cl.to_csv("cl.csv")
+# cl = pd.read_csv("cl.csv")
+# fit_ml(cl)
+# predict_ml(cl)
+
+
+data = pd.read_csv("raw_data_full.csv")
+tdf_ret = transform_large_dataframe(data, chunk_size=200)
+tdf_ret.to_csv("CSV/tdf_ret.csv")
+tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=200)
+tdf_shrout.to_csv("CSV/tdf_shrout.csv")
+tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=200)
+tdf_prc.to_csv("CSV/tdf_prc.csv")
+
 
 # Obtaining the market caps
 
@@ -670,17 +736,22 @@ tdf_mcap = tdf_shrout.copy()
 tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
 
 targets_df = get_targets(tdf_ret)
+targets_df.to_csv("CSV/targets_df.csv")
 cum_df = get_past_returns(tdf_ret)
-cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=2)
+cum_df.to_csv("CSV/cum_df.csv")
+cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=200)
+cl.to_csv("CSV/cl.csv")
+
 standardize(cl)
+
 fit_knn(cl)
-knn = predict_knn(cl)
+#knn = predict_knn(cl)
 fit_svc(cl)
-svc = predict_svc(cl)
-fit_rfc(cl, 20)
-rfc = predict_rfc(cl)
+#svc = predict_svc(cl)
+fit_rfc(cl, 300)
+#rfc = predict_rfc(cl)
 fit_lr(cl)
-lr = predict_lr(cl)
+#lr = predict_lr(cl)
 
 aggpred = aggregate_prediction(knn, svc, rfc, lr)
 aggregate_accuracy(aggpred, cl)
@@ -697,21 +768,5 @@ print("")
 t_total_end = datetime.now() - t_total_start
 print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
 
-perf = performance_analysis(performance)
-
-
-# data = pd.read_csv("output_ret.csv", index_col=0)
-# targets_df = get_targets(data)
-# cum_df = get_past_returns(data)
-# # targets_df = pd.read_csv("targets_df.csv", index_col=0)
-# cl = large_ml_dataframe(targets_df, data, data, cum_df)
-# cl.to_csv("cl.csv")
-# cl = pd.read_csv("cl.csv")
-# fit_ml(cl)
-# predict_ml(cl)
-
-# data = pd.read_csv("raw_data_full.csv")
-# tdf = transform_large_dataframe(data, chunk_size=200)
-
-
+# perf = performance_analysis(performance)
 
