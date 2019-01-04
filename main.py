@@ -11,7 +11,6 @@ from scipy import isnan, stats
 from sklearn import svm, neighbors
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 import warnings
 
 
@@ -97,7 +96,7 @@ def get_future_returns(df, permno, nb_months=7):
     return future_returns
 
 
-def labelize_bsh(*args, threshold=0.02):
+def labelize_bsh(*args, threshold=0.03):
     """This is the simple function that puts a label on the future returns that we have.
     The initial implementation only gives buy sell or hold based on future returns"""
     future_returns_cols = [c for c in args]
@@ -106,7 +105,7 @@ def labelize_bsh(*args, threshold=0.02):
             return 1
         if future_returns_col < -threshold:
             return -1
-    return 0
+        return 0
 
 
 def get_targets(df):
@@ -282,10 +281,11 @@ def fit_knn(ml_dataframe):
     tstart = datetime.now()
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
-    clf = neighbors.KNeighborsClassifier(n_neighbors=3, n_jobs=-1)
+    clf = neighbors.KNeighborsClassifier(n_neighbors=5, n_jobs=-1)
     clf.fit(X, y)
 
-    outfile = open('pickle/full/naive/KNN', 'wb')
+    # outfile = open('pickle/full/naive/KNN', 'wb')
+    outfile = open('pickle/full/CV/KNN', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -302,7 +302,8 @@ def fit_svc(ml_dataframe):
     clf = svm.LinearSVC()
     clf.fit(X, y)
 
-    outfile = open('pickle/full/naive/SVC', 'wb')
+    # outfile = open('pickle/full/naive/SVC', 'wb')
+    outfile = open('pickle/full/CV/SVC', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -319,7 +320,8 @@ def fit_rfc(ml_dataframe, max_depth=1000):
     clf = RandomForestClassifier(n_estimators=10, max_depth=max_depth)
     clf.fit(X, y)
 
-    outfile = open('pickle/full/naive/RFC', 'wb')
+    # outfile = open('pickle/full/naive/RFC', 'wb')
+    outfile = open('pickle/full/CV/RFC', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -336,7 +338,8 @@ def fit_lr(ml_dataframe):
     clf = LogisticRegression(solver="saga", multi_class="ovr", n_jobs=-1)
     clf.fit(X, y)
 
-    outfile = open('pickle/full/naive/LR', 'wb')
+    # outfile = open('pickle/full/naive/LR', 'wb')
+    outfile = open('pickle/full/CV/LR', 'wb')
     pickle.dump(clf, outfile)
     outfile.close()
 
@@ -351,7 +354,8 @@ def predict_knn(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/full/naive/KNN', 'rb')
+    # infile = open('pickle/full/naive/KNN', 'rb')
+    infile = open('pickle/full/CV/KNN', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -373,7 +377,8 @@ def predict_svc(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/full/naive/SVC', 'rb')
+    # infile = open('pickle/full/naive/SVC', 'rb')
+    infile = open('pickle/full/CV/SVC', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -395,7 +400,8 @@ def predict_rfc(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/full/naive/RFC', 'rb')
+    # infile = open('pickle/full/naive/RFC', 'rb')
+    infile = open('pickle/full/CV/RFC', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -417,7 +423,8 @@ def predict_lr(ml_dataframe):
     X = ml_dataframe[['price_1m', 'price_122']]
     y = ml_dataframe['target']
 
-    infile = open('pickle/full/naive/LR', 'rb')
+    # infile = open('pickle/full/naive/LR', 'rb')
+    infile = open('pickle/full/CV/LR', 'rb')
     clf = pickle.load(infile)
     infile.close()
 
@@ -456,6 +463,8 @@ def aggregate_accuracy(agg_pred, ml_dataframe):
         if agg_pred[i] == ml_dataframe.target[i]:
             counter += 1
 
+    print("Target distribution : ", Counter(ml_dataframe.target))
+    print("Aggragate prediction : ", Counter(agg_pred))
     print("Accuracy : {}".format(counter/len(agg_pred)))
 
 
@@ -463,20 +472,22 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     """This is the big function that will evaluate the performance of our investment strategy.
     The inputs are simply the returns and market caps of the whole dataset, and the predicted choice of stocks.
     The output is the time-series of returns of the formed long-short portfolio."""
-
+    tstart = datetime.now()
     # We start by replacing all the NaNs by 0, since not investing or not existing is essentially the same here
-    prediction_transformed_dataframe[isnan(prediction_transformed_dataframe)] = 0
+    prediction_transformed_dataframe = \
+        prediction_transformed_dataframe.where(~isnan(prediction_transformed_dataframe), other=0)
     # We now change all the values to int, for faster comparison
     prediction_transformed_dataframe = prediction_transformed_dataframe.astype("int64")
+
 
     # We initialize the weights matrices, and set to 1 all stocks that we invest in.
     # There are two portfolios here, one long and one short. We will subtract the returns later on.
     weights_long = prediction_transformed_dataframe.copy()
-    weights_long[weights_long < 1] = 0
+    weights_long.where(~(weights_long < 1), other=0, inplace=True)
 
     weights_short = prediction_transformed_dataframe.copy()
-    weights_short[weights_short > -1] = 0
-    weights_short[weights_short == -1] = 1
+    weights_short.where(~(weights_short > -1), other=0, inplace=True)
+    weights_short.where(~(weights_short == -1), other=1, inplace=True)
     weights_short.date = weights_long.date # We reset the dates since they have disappeared in the previous operation.
 
     # There is one subtlety : investment decision is based on past info, so if the stock does
@@ -486,24 +497,28 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     # and one so as to shift the returns by 1 month and compare to investment decisions
     shifted_transformed_dataframe_returns = transformed_dataframe_returns.iloc[2:].copy()
     shifted_transformed_dataframe_returns = shifted_transformed_dataframe_returns.reset_index(drop=True)
-    # We make sure that the returns df is of native dtype, to use the isnan function later
+    # We make sure that the returns df is of native dtype, to use the isna function later
     shifted_transformed_dataframe_returns = shifted_transformed_dataframe_returns.astype("float64")
-    # Note that shifted_... and weights_... have the same shape
+    # We set the columns to be the same as the weights matrices, for faster logical indexing
+    shifted_transformed_dataframe_returns.set_axis(weights_long.columns, axis='columns', inplace=True)
 
+    # Note that shifted_... and weights_... have the same shape
     # We set to 0 investment decisions where there is no return in the next month.
-    weights_long[isnan(shifted_transformed_dataframe_returns)] = 0
-    weights_short[isnan(shifted_transformed_dataframe_returns)] = 0
+    weights_long.where(~shifted_transformed_dataframe_returns.isna(), other=0, inplace=True)
+    weights_short.where(~shifted_transformed_dataframe_returns.isna(), other=0, inplace=True)
 
     # We now need to find the respective weights of all stocks, using a value-weighted approach.
     # We calculate the relative weight of each chosen stock for each date
 
     # Taking absolute value because certain stocks have neg price & resetting index for division
-    transformed_dataframe_mcap = transformed_dataframe_mcap.iloc[1:-1, 1:].reset_index(drop=True).abs()
+    transformed_dataframe_mcap = transformed_dataframe_mcap.iloc[1:-1, 1:].copy().reset_index(drop=True).abs()
     # Setting to 0 all mcaps of stocks that are not selected
     transformed_dataframe_mcap_long = transformed_dataframe_mcap.copy()
     transformed_dataframe_mcap_short = transformed_dataframe_mcap.copy()
-    transformed_dataframe_mcap_long[weights_long.iloc[:, 1:] == 0] = 0
-    transformed_dataframe_mcap_short[weights_short.iloc[:, 1:] == 0] = 0
+    transformed_dataframe_mcap_long.set_axis(weights_long.columns[1:], axis='columns', inplace=True)
+    transformed_dataframe_mcap_short.set_axis(weights_long.columns[1:], axis='columns', inplace=True)
+    transformed_dataframe_mcap_long.where(~(weights_long.iloc[:, 1:] == 0), other=0, inplace=True)
+    transformed_dataframe_mcap_short.where(~(weights_short.iloc[:, 1:] == 0), other=0, inplace=True)
 
     # We include a measure for the transaction costs
     # We first look at the number of transactions
@@ -522,17 +537,16 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     tx_costs_weights_short = weights_short_combined.copy()  # just for the shape
     tx_costs_weights_short[:] = 1
 
-    tx_costs_weights_long[weights_long_combined == 3] = 0
-    tx_costs_weights_long[weights_long_combined == 0] = 0
-    tx_costs_weights_long[weights_long_combined == -3] = 0
+    tx_costs_weights_long.where(~(weights_long_combined == 3), other=0, inplace=True)
+    tx_costs_weights_long.where(~(weights_long_combined == 0), other=0, inplace=True)
+    tx_costs_weights_long.where(~(weights_long_combined == -3), other=0, inplace=True)
 
-    tx_costs_weights_short[weights_short_combined == 3] = 0
-    tx_costs_weights_short[weights_short_combined == 0] = 0
-    tx_costs_weights_short[weights_short_combined == -3] = 0
+    tx_costs_weights_short.where(~(weights_short_combined == 3), other=0, inplace=True)
+    tx_costs_weights_short.where(~(weights_short_combined == 0), other=0, inplace=True)
+    tx_costs_weights_short.where(~(weights_short_combined == -3), other=0, inplace=True)
 
     nb_tx_long = tx_costs_weights_long.sum(axis=1)
     nb_tx_short = tx_costs_weights_short.sum(axis=1)
-
     # We calculate the market-cap-weighted weight of each stock, aka value-weighted approach
     weights_long.iloc[:, 1:] = transformed_dataframe_mcap_long.divide(transformed_dataframe_mcap_long.sum(axis=1),
                                                                       axis='index')
@@ -553,8 +567,8 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     # Remark : the combined change of absolute weights can be maximum 2 in case of "complete turnover"
 
     # we calculate the tx costs in terms of percentage
-    tx_costs_long = (1+turnover_long)*nb_tx_long*0.0001
-    tx_costs_short = (1+turnover_short)*nb_tx_short*0.0001
+    tx_costs_long = (1+turnover_long)*nb_tx_long
+    tx_costs_short = (1+turnover_short)*nb_tx_short
 
     # We now want to calculate the performance of our two portfolios
     returns_df_long = shifted_transformed_dataframe_returns.iloc[:, 1:].multiply(weights_long.iloc[:, 1:], fill_value=0)
@@ -565,10 +579,8 @@ def portfolio_performance(transformed_dataframe_returns, transformed_dataframe_m
     performance_short = returns_df_short.sum(axis=1)
 
     performance_series = (performance_long-performance_short)
-    performance_series = performance_series.sub(tx_costs_long, fill_value=0)
-    performance_series = performance_series.sub(tx_costs_short, fill_value=0)
 
-    return performance_series
+    return performance_series, tx_costs_long, tx_costs_short
 
 
 def performance_analysis(portfolio_series):
@@ -578,9 +590,10 @@ def performance_analysis(portfolio_series):
     fama_raw = pd.read_csv("fama_french3.csv")
     # Extracting the dates we want and dividing by 100 since Ken French data is in "full" percentage
     # We do not include the first and last value of our period since we have no portfolio at that time
-    print("date2007")
-    fama_french_factors = fama_raw.loc[(fama_raw["date"] > 200701) & (fama_raw["date"] < 201806),
-                                       ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True)/100
+    # fama_french_factors = fama_raw.loc[(fama_raw["date"] > 196307) & (fama_raw["date"] < 201806),
+    #                                    ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True)/100
+    fama_french_factors = fama_raw.loc[(fama_raw["date"] > 200001) & (fama_raw["date"] < 201806),
+                                       ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True) / 100
 
     # Total return
     # No built-in product function
@@ -637,9 +650,13 @@ def performance_analysis(portfolio_series):
     plt.plot(fama_french_factors["date"].astype(str), (1+portfolio_series).cumprod())
     plt.legend(['Portfolio'])
     plt.xticks(rotation=90)
-    # Show one date per year only
-    plt.xticks(np.arange(0, 136, step=12))
+    # Show one date every two year only
+    plt.xticks(np.arange(0, len(portfolio_series), step=round(len(portfolio_series)/12)))
+    # plt.xticks(np.arange(0, 120, step=10))
+    plt.yscale('log')
+    plt.savefig('perf_CV.png')
     plt.show()
+
 
     summary = pd.DataFrame()
     summary["##"] = ["Total Return", "Average Monthly Return", "Monthly Standard deviation",
@@ -653,27 +670,50 @@ def performance_analysis(portfolio_series):
     return summary
 
 
-# ------------------------------------------------------------------------------------------------------------------
-# # The small dataset
-#
+# # ------------------------------------------------------------------------------------------------------------------
+# NAIVE IN-SAMPLE
+
 # print("-----------------------START OF LOG-----------------------------")
 # print("")
 # t_total_start = datetime.now()
 #
-# data = pd.read_csv("little_test_data.csv")
-# tdf_ret = transform_large_dataframe(data, chunk_size=2)
-# tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=2)
-# tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=2)
+# data = pd.read_csv("raw_data_full.csv")
+# tdf_ret = transform_large_dataframe(data, chunk_size=200)
+# tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=200)
+# tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=200)
 #
+# # Because of the shuffled dates
+#
+# tdf_ret = tdf_ret.set_index(['date'])
+# tdf_ret = tdf_ret.sort_index()
+# tdf_ret = tdf_ret.reset_index()
+# tdf_shrout = tdf_shrout.set_index(['date'])
+# tdf_prc = tdf_prc.set_index(['date'])
+# tdf_prc = tdf_prc.sort_index()
+# tdf_shrout = tdf_shrout.sort_index()
+# tdf_prc = tdf_prc.reset_index()
+# tdf_shrout = tdf_shrout.reset_index()
+#
+# # tdf_shrout = pd.read_csv("CSV/tdf_shrout.csv", index_col=0)
+# # tdf_prc = pd.read_csv("CSV/tdf_prc.csv", index_col=0)
+#
+# #
 # # Obtaining the market caps
 #
 # tdf_mcap = tdf_shrout.copy()
 # tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
 #
 # targets_df = get_targets(tdf_ret)
+# targets_df.to_csv("CSV/targets_df.csv")
 # cum_df = get_past_returns(tdf_ret)
-# cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=2)
+# cum_df.to_csv("CSV/cum_df.csv")
+# cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=200)
+
+# # cl.to_csv("CSV/cl.csv")
+# # cl = pd.read_csv("CSV/cl.csv", index_col=0)
+
 # standardize(cl)
+#
 # fit_knn(cl)
 # knn = predict_knn(cl)
 # fit_svc(cl)
@@ -688,9 +728,36 @@ def performance_analysis(portfolio_series):
 #
 # pred_column = pd.DataFrame(aggpred, columns=['prediction'])
 # cl = cl.join(pred_column, sort=False)
-# new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
+# new_tdf = transform_large_dataframe(cl, chunk_size=200, variable='prediction')
 #
-# performance = portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
+# new_tdf = new_tdf.set_index(['date'])
+# new_tdf = new_tdf.sort_index()
+# new_tdf = new_tdf.reset_index()
+#
+# outfile = open('pickle/temp/new_tdf', 'wb')
+# pickle.dump(new_tdf, outfile)
+# outfile.close()
+#
+# # Because of the companies that we have to drop
+# diff = list(set(tdf_ret.columns[1:].astype("str")) - set(new_tdf.columns[1:].astype("int32").astype("str")))
+#
+# #
+# performance, tx_cost_long, tx_cost_short = portfolio_performance(tdf_ret.drop(diff, axis=1),
+#                                                                      tdf_mcap.drop(diff, axis=1), new_tdf)
+#
+# outfile = open('pickle/temp/ind_3_naive_perf', 'wb')
+# pickle.dump(performance, outfile)
+# outfile.close()
+# outfile = open('pickle/temp/ind_3_naive_txcl', 'wb')
+# pickle.dump(tx_cost_long, outfile)
+# outfile.close()
+# outfile = open('pickle/temp/ind_3_naive_txcs', 'wb')
+# pickle.dump(tx_cost_short, outfile)
+# outfile.close()
+#
+# performance_series = performance.sub(tx_cost_long*0.000005, fill_value=0)
+# performance_series = performance_series.sub(tx_cost_short*0.000005, fill_value=0)
+# perf = performance_analysis(performance_series)
 #
 # print("")
 # print("-----------------------END OF LOG-----------------------------")
@@ -698,75 +765,191 @@ def performance_analysis(portfolio_series):
 # t_total_end = datetime.now() - t_total_start
 # print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
 #
+#
+#
+# # ------------------------------------------------------------------------------------------------------------------
+# CROSS-VALIDATION
+
+# print("-----------------------START OF LOG-----------------------------")
+# print("")
+# t_total_start = datetime.now()
+#
+# data = pd.read_csv("raw_data_full.csv")
+# tdf_ret = transform_large_dataframe(data, chunk_size=200)
+# tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=200)
+# tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=200)
+#
+# # Because of the shuffled dates
+#
+# tdf_ret = tdf_ret.set_index(['date'])
+# tdf_ret = tdf_ret.sort_index()
+# tdf_ret = tdf_ret.reset_index()
+# tdf_shrout = tdf_shrout.set_index(['date'])
+# tdf_prc = tdf_prc.set_index(['date'])
+# tdf_prc = tdf_prc.sort_index()
+# tdf_shrout = tdf_shrout.sort_index()
+# tdf_prc = tdf_prc.reset_index()
+# tdf_shrout = tdf_shrout.reset_index()
+#
+# # tdf_shrout = pd.read_csv("CSV/tdf_shrout.csv", index_col=0)
+# # tdf_prc = pd.read_csv("CSV/tdf_prc.csv", index_col=0)
+#
+# #
+# # Obtaining the market caps
+#
+# tdf_mcap = tdf_shrout.copy()
+# tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
+#
+# targets_df = get_targets(tdf_ret)
+# targets_df.to_csv("CSV/targets_df.csv")
+# cum_df = get_past_returns(tdf_ret)
+# cum_df.to_csv("CSV/cum_df.csv")
+#
+# cl_train = large_ml_dataframe(targets_df.iloc[:438, :], tdf_ret.iloc[:438, :], tdf_ret.iloc[:438, :], cum_df.iloc[:438, :], chunk_size=200)
+# cl_test = large_ml_dataframe(targets_df.iloc[438:, :], tdf_ret.iloc[438:, :], tdf_ret.iloc[438:, :], cum_df.iloc[438:, :], chunk_size=200)
+#
+#
+# standardize(cl_train)
+# standardize(cl_test)
+#
+# fit_knn(cl_train)
+# knn = predict_knn(cl_test)
+# fit_svc(cl_train)
+# svc = predict_svc(cl_test)
+# fit_rfc(cl_train, 20)
+# rfc = predict_rfc(cl_test)
+# fit_lr(cl_train)
+# lr = predict_lr(cl_test)
+#
+# aggpred = aggregate_prediction(knn, svc, rfc, lr)
+# aggregate_accuracy(aggpred, cl_test)
+#
+# pred_column = pd.DataFrame(aggpred, columns=['prediction'])
+# cl_test = cl_test.join(pred_column, sort=False)
+# new_tdf = transform_large_dataframe(cl_test, chunk_size=200, variable='prediction')
+#
+# new_tdf = new_tdf.set_index(['date'])
+# new_tdf = new_tdf.sort_index()
+# new_tdf = new_tdf.reset_index()
+#
+# outfile = open('pickle/temp/new_tdf', 'wb')
+# pickle.dump(new_tdf, outfile)
+# outfile.close()
+#
+# # Because of the companies that we have to drop
+# diff = list(set(tdf_ret.columns[1:]) - set(new_tdf.columns[1:].astype("int32")))
+# #
+# performance, tx_cost_long, tx_cost_short = portfolio_performance(tdf_ret.iloc[438:, :].drop(diff, axis=1),
+#                                                                      tdf_mcap.iloc[438:, :].drop(diff, axis=1), new_tdf)
+#
+#
+# outfile = open('pickle/temp/ind_3_cv_perf', 'wb')
+# pickle.dump(performance, outfile)
+# outfile.close()
+# outfile = open('pickle/temp/ind_3_cv_txcl', 'wb')
+# pickle.dump(tx_cost_long, outfile)
+# outfile.close()
+# outfile = open('pickle/temp/ind_3_cv_txcs', 'wb')
+# pickle.dump(tx_cost_short, outfile)
+# outfile.close()
+#
+# performance_series = performance.sub(tx_cost_long*0.000005, fill_value=0)
+# performance_series = performance_series.sub(tx_cost_short*0.000005, fill_value=0)
 # perf = performance_analysis(performance)
+#
+# print("")
+# print("-----------------------END OF LOG-----------------------------")
+# print("")
+# t_total_end = datetime.now() - t_total_start
+# print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
 
 
 
 
 # ------------------------------------------------------------------------------------------------------------------
-# The whole dataset
+# The medium dataset
 
-print("-----------------------START OF LOG-----------------------------")
-print("")
-t_total_start = datetime.now()
-
-# data = pd.read_csv("output_ret.csv", index_col=0)
-# targets_df = get_targets(data)
-# cum_df = get_past_returns(data)
-# # targets_df = pd.read_csv("targets_df.csv", index_col=0)
-# cl = large_ml_dataframe(targets_df, data, data, cum_df)
-# cl.to_csv("cl.csv")
-# cl = pd.read_csv("cl.csv")
-# fit_ml(cl)
-# predict_ml(cl)
-
-
-data = pd.read_csv("raw_data_full.csv")
-tdf_ret = transform_large_dataframe(data, chunk_size=200)
-tdf_ret.to_csv("CSV/tdf_ret.csv")
-tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=200)
-tdf_shrout.to_csv("CSV/tdf_shrout.csv")
-tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=200)
-tdf_prc.to_csv("CSV/tdf_prc.csv")
-
-
-# Obtaining the market caps
-
-tdf_mcap = tdf_shrout.copy()
-tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
-
-targets_df = get_targets(tdf_ret)
-targets_df.to_csv("CSV/targets_df.csv")
-cum_df = get_past_returns(tdf_ret)
-cum_df.to_csv("CSV/cum_df.csv")
-cl = large_ml_dataframe(targets_df, tdf_ret, tdf_ret, cum_df, chunk_size=200)
-cl.to_csv("CSV/cl.csv")
-
-standardize(cl)
-
-fit_knn(cl)
-#knn = predict_knn(cl)
-fit_svc(cl)
-#svc = predict_svc(cl)
-fit_rfc(cl, 300)
-#rfc = predict_rfc(cl)
-fit_lr(cl)
-#lr = predict_lr(cl)
-
-aggpred = aggregate_prediction(knn, svc, rfc, lr)
-aggregate_accuracy(aggpred, cl)
-
-pred_column = pd.DataFrame(aggpred, columns=['prediction'])
-cl = cl.join(pred_column, sort=False)
-new_tdf = transform_large_dataframe(cl, chunk_size=2, variable='prediction')
-
-performance = portfolio_performance(tdf_ret, tdf_mcap, new_tdf)
-
-print("")
-print("-----------------------END OF LOG-----------------------------")
-print("")
-t_total_end = datetime.now() - t_total_start
-print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
-
+# print("-----------------------START OF LOG medium-----------------------------")
+# print("")
+# t_total_start = datetime.now()
+#
+# # data = pd.read_csv("little_test_data.csv")
+# data = pd.read_csv("raw_data_full.csv")
+# data = data.iloc[:12000, :]
+# tdf_ret = transform_large_dataframe(data, chunk_size=51)
+# tdf_shrout = transform_large_dataframe(data, variable='SHROUT', chunk_size=51)
+# tdf_prc = transform_large_dataframe(data, variable='PRC', chunk_size=51)
+#
+# # Because of the shuffled dates
+#
+# tdf_ret = tdf_ret.set_index(['date'])
+# tdf_ret = tdf_ret.sort_index()
+# tdf_ret = tdf_ret.reset_index()
+# tdf_shrout = tdf_shrout.set_index(['date'])
+# tdf_prc = tdf_prc.set_index(['date'])
+# tdf_prc = tdf_prc.sort_index()
+# tdf_shrout = tdf_shrout.sort_index()
+# tdf_prc = tdf_prc.reset_index()
+# tdf_shrout = tdf_shrout.reset_index()
+#
+# # tdf_shrout = pd.read_csv("CSV/tdf_shrout.csv", index_col=0)
+# # tdf_prc = pd.read_csv("CSV/tdf_prc.csv", index_col=0)
+#
+# #
+# # Obtaining the market caps
+#
+# tdf_mcap = tdf_shrout.copy()
+# tdf_mcap.iloc[:, 1:] = tdf_shrout.iloc[:, 1:]*tdf_prc.iloc[:, 1:]
+#
+# targets_df = get_targets(tdf_ret)
+# targets_df.to_csv("CSV/targets_df.csv")
+# cum_df = get_past_returns(tdf_ret)
+# cum_df.to_csv("CSV/cum_df.csv")
+#
+# cl_train = large_ml_dataframe(targets_df.iloc[:438, :], tdf_ret.iloc[:438, :], tdf_ret.iloc[:438, :], cum_df.iloc[:438, :], chunk_size=51)
+# cl_test = large_ml_dataframe(targets_df.iloc[438:, :], tdf_ret.iloc[438:, :], tdf_ret.iloc[438:, :], cum_df.iloc[438:, :], chunk_size=51)
+#
+# # cl.to_csv("CSV/cl.csv")
+# # cl = pd.read_csv("CSV/cl.csv", index_col=0)
+#
+# standardize(cl_train)
+# standardize(cl_test)
+#
+# fit_knn(cl_train)
+# knn = predict_knn(cl_test)
+# fit_svc(cl_train)
+# svc = predict_svc(cl_test)
+# fit_rfc(cl_train, 10)
+# rfc = predict_rfc(cl_test)
+# fit_lr(cl_train)
+# lr = predict_lr(cl_test)
+#
+# aggpred = aggregate_prediction(knn, svc, rfc, lr)
+# aggregate_accuracy(aggpred, cl_test)
+#
+# pred_column = pd.DataFrame(aggpred, columns=['prediction'])
+# cl_test = cl_test.join(pred_column, sort=False)
+# new_tdf = transform_large_dataframe(cl_test, chunk_size=51, variable='prediction')
+#
+# new_tdf = new_tdf.set_index(['date'])
+# new_tdf = new_tdf.sort_index()
+# new_tdf = new_tdf.reset_index()
+#
+# outfile = open('pickle/temp/new_tdf', 'wb')
+# pickle.dump(new_tdf, outfile)
+# outfile.close()
+#
+# # Because of the companies that we have to drop
+# diff = list(set(tdf_ret.columns[1:]) - set(new_tdf.columns[1:].astype("int32")))
+# #
+# performance, tx_cost_long, tx_cost_short = portfolio_performance(tdf_ret.iloc[438:, :].drop(diff, axis=1),
+#                                                                      tdf_mcap.iloc[438:, :].drop(diff, axis=1), new_tdf)
+#
+#
 # perf = performance_analysis(performance)
-
+#
+# print("")
+# print("-----------------------END OF LOG-----------------------------")
+# print("")
+# t_total_end = datetime.now() - t_total_start
+# print("Total Elapsed Time : {} seconds.".format(t_total_end.total_seconds()))
