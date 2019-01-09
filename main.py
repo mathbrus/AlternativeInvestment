@@ -590,10 +590,10 @@ def performance_analysis(portfolio_series):
     fama_raw = pd.read_csv("fama_french3.csv")
     # Extracting the dates we want and dividing by 100 since Ken French data is in "full" percentage
     # We do not include the first and last value of our period since we have no portfolio at that time
-    # fama_french_factors = fama_raw.loc[(fama_raw["date"] > 196307) & (fama_raw["date"] < 201806),
-    #                                    ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True)/100
-    fama_french_factors = fama_raw.loc[(fama_raw["date"] > 200001) & (fama_raw["date"] < 201806),
-                                       ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True) / 100
+    fama_french_factors = fama_raw.loc[(fama_raw["date"] > 196307) & (fama_raw["date"] < 201806),
+                                       ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True)/100
+    # fama_french_factors = fama_raw.loc[(fama_raw["date"] > 200001) & (fama_raw["date"] < 201806),
+    #                                    ["date", "Mkt-RF", "SMB", "HML", "RF"]].reset_index(drop=True) / 100
 
     # Total return
     # No built-in product function
@@ -745,18 +745,28 @@ def performance_analysis(portfolio_series):
 # performance, tx_cost_long, tx_cost_short = portfolio_performance(tdf_ret.drop(diff, axis=1),
 #                                                                      tdf_mcap.drop(diff, axis=1), new_tdf)
 #
-# outfile = open('pickle/temp/ind_3_naive_perf', 'wb')
+# outfile = open('pickle/temp/perf', 'wb')
 # pickle.dump(performance, outfile)
 # outfile.close()
-# outfile = open('pickle/temp/ind_3_naive_txcl', 'wb')
+# outfile = open('pickle/temp/txcl', 'wb')
 # pickle.dump(tx_cost_long, outfile)
 # outfile.close()
-# outfile = open('pickle/temp/ind_3_naive_txcs', 'wb')
+# outfile = open('pickle/temp/txcs', 'wb')
 # pickle.dump(tx_cost_short, outfile)
 # outfile.close()
+
+# infile = open('pickle/temp/perf', 'rb')
+# performance = pickle.load(infile)
+# infile.close()
+# infile = open('pickle/temp/txcl', 'rb')
+# tx_cost_long = pickle.load(infile)
+# infile.close()
+# infile = open('pickle/temp/txcs', 'rb')
+# tx_cost_short = pickle.load(infile)
+# infile.close()
 #
-# performance_series = performance.sub(tx_cost_long*0.000005, fill_value=0)
-# performance_series = performance_series.sub(tx_cost_short*0.000005, fill_value=0)
+# performance_series = performance.sub(tx_cost_long*0.000004, fill_value=0)
+# performance_series = performance_series.sub(tx_cost_short*0.000004, fill_value=0)
 # perf = performance_analysis(performance_series)
 #
 # print("")
@@ -843,18 +853,18 @@ def performance_analysis(portfolio_series):
 #                                                                      tdf_mcap.iloc[438:, :].drop(diff, axis=1), new_tdf)
 #
 #
-# outfile = open('pickle/temp/ind_3_cv_perf', 'wb')
+# outfile = open('pickle/temp/cv_perf', 'wb')
 # pickle.dump(performance, outfile)
 # outfile.close()
-# outfile = open('pickle/temp/ind_3_cv_txcl', 'wb')
+# outfile = open('pickle/temp/cv_txcl', 'wb')
 # pickle.dump(tx_cost_long, outfile)
 # outfile.close()
-# outfile = open('pickle/temp/ind_3_cv_txcs', 'wb')
+# outfile = open('pickle/temp/cv_txcs', 'wb')
 # pickle.dump(tx_cost_short, outfile)
 # outfile.close()
 #
-# performance_series = performance.sub(tx_cost_long*0.000005, fill_value=0)
-# performance_series = performance_series.sub(tx_cost_short*0.000005, fill_value=0)
+# performance_series = performance.sub(tx_cost_long*0.000004, fill_value=0)
+# performance_series = performance_series.sub(tx_cost_short*0.000004, fill_value=0)
 # perf = performance_analysis(performance)
 #
 # print("")
